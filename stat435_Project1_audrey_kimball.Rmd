@@ -1,6 +1,6 @@
 ---
 title: "Stat 435 Project 1"
-author: "Audrey Kimball (11659795)"
+author: "Audrey Kimball"
 header-includes:
 - \usepackage{bbm}
 - \usepackage{amssymb}
@@ -217,3 +217,4 @@ data.frame(Variable = colnames(x_train_ridge),
 Answer is in the report
 
 *Note:* For conducting hypothesis tests on some model coefficients for the models you found in (3) and (4) you can use the R `library(hdi)`.
+
