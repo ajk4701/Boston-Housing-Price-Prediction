@@ -1,0 +1,219 @@
+---
+title: "Stat 435 Project 1"
+author: "Audrey Kimball (11659795)"
+header-includes:
+- \usepackage{bbm}
+- \usepackage{amssymb}
+- \usepackage{amsmath}
+- \usepackage{graphicx}
+- \usepackage{natbib}
+- \usepackage{float}
+- \floatplacement{figure}{H}
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+fontsize: 11pt
+---
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+#library loading
+library(knitr)
+library(MASS)
+library(leaps)
+library(glmnet)
+library(hdi)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+# General guidelines
+
+Please show your work in order to get points. Providing correct answers without supporting details does not receive full credits. This project requires you to synthesize your knowledge on linear models and model selection, apply such knowledge to a dataset, make scientific discoveries, and concisely present your findings. *Please follow the rubrics on projects given in the syllabus.* This project can be done by up to 2 students as a group assignment. Please write each team member's name and student ID on your report, and only one copy of your report needs to be submitted.
+
+You DO NOT have to submit your project report using typesetting software. However, your answers must be legible for grading. Please upload your answers to the course space. Specifically, if you are not able to knit a .Rmd/.rmd file into an output file such as a .pdf, .doc, .docx or .html file that contains your codes, outputs from your codes, your interpretations on the outputs, and your answers in text (possibly with math expressions), you can organize your codes, their outputs and your answers in a document in the format given below:
+
+```
+Problem or task or question ... 
+Codes ...
+Outputs ...
+Your interpretations ...
+```
+
+It is absolutely not OK to just submit your codes only. This will result in a considerable loss of points on your assignments or projects.
+
+
+# Dataset and its description
+
+Please use the data set `Boston` (which is contained in the library `MASS`). This data set contains $506$ observations on $14$ variables. The response variable is `medv`, and the rest are potential predictors. Namely, we are interested in predicting `medv` using a linear model. Please make sure you fully understand the meaning and type of each variable in the data set.
+
+```{r}
+str(Boston)
+names(Boston)
+str(Boston)
+```
+
+# Tasks
+
+(0) Please use `set.seed(1)` for all operations that involve user-induced randomness (such as the command `sample` for resampling from a data set, `cv.glmnet` for cross-validation on the LASSO method or ridge regression, etc). Otherwise, your results will *not be reproducible* when they are checked and graded.
+```{r}
+set.seed(1)
+```
+
+(1) Please *randomly split (using the `sample` command)* the observations into a training set and a validation set, so that the training set can be used to fit a linear model, and the validation set can be used to evaluate the prediction accuracy of the fitted model. Here you have the freedom on splitting. But please be careful with the number of observations for each set, since a training set with a few observations cannot produce a relatively good fitted model. Caution: these 2 sets should be non-intersecting; sample from the row indices but do not sample with replacement when creating the two sets.
+```{r}
+#number of rows
+n <- nrow(Boston)
+
+#random splitting into training 80% and validation 20%
+train_index <- sample(1:n, size = 0.8 * n, replace = FALSE)
+train_set <- Boston[train_index, ]
+valid_set <- Boston[-train_index, ]
+```
+
+(2) Apply best subset selection on all potential predictors without interactions between them, report the best model and its fitted model, perform model diagnostics on the model, conduct hypothesis tests on some coefficients of the model and report your findings, and assess the prediction accuracy of the fitted model and report your findings. Note: you can use the mean squared error to measure prediction accuracy.
+```{r}
+#using leaps for subset selection
+#fit linear models with all combos of 
+best_subset <- regsubsets(medv ~ ., data = train_set)
+summary(best_subset)
+```
+```{r}
+#extract the summary
+best_subset_summary <- summary(best_subset)
+
+#identify the best model size based on highest adjusted R^2
+which.max(best_subset_summary$adjr2)
+
+#formula for the best model
+best_predict_sub <- names(which(best_subset_summary$outmat[6, ]
+                                == "*"))
+best_formula_sub <- as.formula(paste("medv ~", paste(best_predict_sub,
+                                                 collapse = " + ")))
+
+#fit the model
+best_model_sub <- lm(best_formula_sub, data = train_set)
+
+#summary sso we can see p-values
+summary(best_model_sub)
+```
+```{r}
+#predict on validation set
+predictions_sub <- predict(best_model_sub, newdata = valid_set)
+
+#calculate mse
+mse_subset <- mean((valid_set$medv - predictions_sub)^2)
+mse_subset
+```
+
+(3) Implement LASSO (with cross-validation to select the optimal tuning parameter) on all potential predictors without interactions between them, report the best model (that is based on the optimal tuning parameter) and its fitted model, conduct hypothesis tests on some coefficients of the model and report your findings, and assess the prediction accuracy of the fitted model and report your findings.
+```{r}
+#prep the data
+x_train_lasso <- as.matrix(train_set[, -14]) #exclude medv
+y_train_lasso <- train_set$medv #response
+
+#lasso cross-validation to select lambada
+lasso_model <- cv.glmnet(x_train_lasso, y_train_lasso, alpha = 1)
+
+#display optimal lambda and coefficients
+lasso_model$lambda.min
+lasso_coef <- coef(lasso_model, s = "lambda.min")
+lasso_nonzero_coef <- lasso_coef[lasso_coef != 0]
+lasso_nonzero_coef
+```
+```{r}
+x_valid_lasso <- as.matrix(valid_set[, -14])
+y_valid_lasso <- valid_set$medv
+
+# optimal LASSO model
+lasso_predictions <- predict(lasso_model, s = "lambda.min",
+                             newx = x_valid_lasso)
+
+# mse
+lasso_mse <- mean((y_valid_lasso - lasso_predictions)^2)
+lasso_mse
+```
+```{r}
+#bootstrap resample
+n_boot_lasso <- 100
+boot_coef_lasso <- matrix(NA, nrow = n_boot_lasso,
+                          ncol = length(lasso_coef) - 1)
+
+for(i in 1:n_boot_lasso) {
+  #resample data
+  boot_sample <- sample(1:nrow(train_set), replace = TRUE)
+  x_boot <- as.matrix(train_set[boot_sample, -14])
+  y_boot <- train_set$medv[boot_sample]
+  
+  #fit lasso
+  lasso_boot <- cv.glmnet(x_boot, y_boot, alpha = 1)
+  
+  #store coefficents
+  boot_coef_lasso[i, ] <- as.vector(coef(lasso_boot, s = "lambda.min")[-1])
+}
+coef_se <- apply(boot_coef_lasso, 2, sd)
+coef_se
+
+t_stats <- lasso_coef[-1] / coef_se
+t_stats
+
+p_values <- 2 * (1 - pnorm(abs(t_stats)))
+p_values
+
+```
+(4) Implement ridge regression (with cross-validation to select the optimal tuning parameter) without interactions between them, report the best model (that is based on the optimal tuning parameter) and its fitted model, conduct hypothesis tests on some coefficients of the model and report your findings, and assess the prediction accuracy of the fitted model and report your findings.
+```{r}
+#fit ridge with cv
+x_train_ridge <- as.matrix(train_set[, -14])  # predictors (excluding medv)
+y_train_ridge <- train_set$medv  # response
+ridge_model <- cv.glmnet(x_train_ridge, y_train_ridge, alpha = 0)
+
+#show optimal lambda
+ridge_model$lambda.min
+coef(ridge_model, s = "lambda.min")
+
+```
+```{r}
+#valid data
+x_valid_ridge <- as.matrix(valid_set[, -14])
+y_valid_ridge <- valid_set$medv
+
+# Predict using the optimal ridge model
+ridge_predict <- predict(ridge_model, s = "lambda.min",
+                         newx = x_valid_ridge)
+
+# calc error
+ridge_mse <- mean((y_valid_ridge - ridge_predict)^2)
+ridge_mse
+
+```
+```{r}
+n_boot_ridge <- 100  # Number of bootstrap samples
+boot_coefs_ridge <- matrix(NA, nrow = n_boot_ridge, ncol = ncol(x_train_ridge))
+
+for (i in 1:n_boot_ridge) {
+  # Sample with replacement
+  boot_sample <- sample(1:nrow(train_set), nrow(train_set), replace = TRUE)
+  x_boot <- x_train_ridge[boot_sample, ]
+  y_boot <- y_train_ridge[boot_sample]
+  
+  # Fit ridge regression on the bootstrap sample
+  ridge_boot <- cv.glmnet(x_boot, y_boot, alpha = 0)
+  
+  # Store the coefficients for the optimal lambda (lambda.min)
+  boot_coefs_ridge[i, ] <- coef(ridge_boot, s = "lambda.min")[-1]
+}
+
+# Calculate confidence intervals
+lower_bound <- apply(boot_coefs_ridge, 2, function(x) quantile(x, 0.025))
+upper_bound <- apply(boot_coefs_ridge, 2, function(x) quantile(x, 0.975))
+
+# Display results for hypothesis testing
+data.frame(Variable = colnames(x_train_ridge), 
+           Lower_CI = lower_bound, 
+           Upper_CI = upper_bound)
+```
+(5) Among the best/optimal models you would find in (2), (3) and (4) respectively, which one has the best prediction accuracy? If you consider a trade-off between the number of predictors in a model and its prediction accuracy, which among the best models you found in (2), (3) and (4) would you prefer?
+
+Answer is in the report
+
+*Note:* For conducting hypothesis tests on some model coefficients for the models you found in (3) and (4) you can use the R `library(hdi)`.
